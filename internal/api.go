@@ -12,8 +12,7 @@ func StartAPI() {
 	r := gin.Default()
 
 	db, err := sql.Open("postgres", "host=localhost port=5432 user=admin password=123 dbname=rinha sslmode=disable")
-	db.SetMaxOpenConns(150)
-	db.SetMaxIdleConns(100)
+	db.SetMaxOpenConns(30)
 	db.SetConnMaxLifetime(5 * time.Minute)
 
 	time.Sleep(5 * time.Second)
@@ -38,8 +37,12 @@ func StartAPI() {
 	r.POST("/clientes/:id/transacoes", handler.InsertTransaction)
 	r.GET("/clientes/:id/extrato", handler.GetStatement)
 
-	//os.Setenv("PORT", "8081")
-	err = r.Run(":" + os.Getenv("PORT"))
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+
+	err = r.Run(":" + port)
 	if err != nil {
 		panic(err)
 	}

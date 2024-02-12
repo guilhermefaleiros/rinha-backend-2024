@@ -3,8 +3,8 @@ version: "3.5"
 services:
   api01: &api
     build:
-        context: .
-        dockerfile: Dockerfile
+      context: .
+      dockerfile: Dockerfile
     hostname: api01
     environment:
       - PORT=8081
@@ -14,8 +14,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.15'
-          memory: "20MB"
+          cpus: "0.37"
+          memory: "30MB"
 
   api02:
     <<: *api
@@ -23,6 +23,11 @@ services:
     network_mode: host
     environment:
       - PORT=8082
+    deploy:
+      resources:
+        limits:
+          cpus: "0.37"
+          memory: "30MB"
 
   nginx:
     image: nginx:latest
@@ -37,7 +42,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.50"
+          cpus: "0.2"
           memory: "30MB"
 
   db:
@@ -53,9 +58,9 @@ services:
     network_mode: host
     volumes:
       - ./config/init.sql:/docker-entrypoint-initdb.d/init.sql
-      - ./postgresql.conf:/docker-entrypoint-initdb.d/postgresql.conf
+      #- ./config/postgresql.conf:/docker-entrypoint-initdb.d/postgresql.conf
     deploy:
       resources:
         limits:
-          cpus: '0.7'
+          cpus: "0.56"
           memory: "480MB"

@@ -3,7 +3,6 @@ package internal
 import (
 	"database/sql"
 	"github.com/gin-gonic/gin"
-	"math"
 	"net/http"
 	"strconv"
 	"time"
@@ -54,11 +53,6 @@ func (h *ApiHandler) InsertTransaction(r *gin.Context) {
 		return
 	}
 
-	if _, exists := h.cachedLimits[clientId]; !exists {
-		r.JSON(http.StatusNotFound, gin.H{"error": "cliente não encontrado"})
-		return
-	}
-
 	var request TransactionRequest
 	if err := r.ShouldBindJSON(&request); err != nil {
 		r.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -70,115 +64,91 @@ func (h *ApiHandler) InsertTransaction(r *gin.Context) {
 		return
 	}
 
-	tx, err := h.db.Begin()
+	stmt, err := h.db.Prepare("SELECT process_transaction($1, $2, $3, $4)")
 	if err != nil {
 		r.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-
-	defer func() {
-		if p := recover(); p != nil {
-			tx.Rollback()
-			panic(p)
-		} else if err != nil {
-			tx.Rollback()
-		} else {
-			err = tx.Commit()
-		}
-	}()
-
-	result, err := tx.Query("SELECT pg_advisory_xact_lock($1)", clientId)
-	err = result.Close()
-	if err != nil {
-		r.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	stmt, err := tx.Prepare("SELECT valor FROM saldos WHERE cliente_id = $1")
-	if err != nil {
-		r.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	defer stmt.Close()
 
 	var currentAmount int
-	if err = stmt.QueryRow(clientId).Scan(&currentAmount); err != nil {
-		r.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	newAmount := currentAmount
-	if request.Tipo == "d" {
-		newAmount -= int(request.Valor)
-		if newAmount < 0 && int(math.Abs(float64(newAmount))) > h.cachedLimits[clientId] {
-			r.JSON(http.StatusUnprocessableEntity, gin.H{"erro": "saldo insuficiente"})
-			return
+	if err = stmt.QueryRow(clientId, request.Valor, request.Descricao, request.Tipo).Scan(&currentAmount); err != nil {
+		if err.Error() == "pq: 422" {
+			r.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
+		} else if err.Error() == "pq: 404" {
+			r.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		} else {
+			r.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		}
-	} else if request.Tipo == "c" {
-		newAmount += int(request.Valor)
-	}
-
-	updateStmt, err := tx.Prepare("UPDATE saldos SET valor = $1 WHERE cliente_id = $2")
-	if err != nil {
-		r.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	defer updateStmt.Close()
-
-	if _, err = updateStmt.Exec(newAmount, clientId); err != nil {
-		r.JSON(http.StatusInternalServerError, gin.H{"erro": err.Error()})
+	if currentAmount == -10000000 {
+		r.JSON(http.StatusNotFound, gin.H{"error": "invalid request"})
 		return
 	}
-
-	insertStmt, err := tx.Prepare("INSERT INTO transacoes (cliente_id, valor, descricao, tipo) VALUES ($1, $2, $3, $4)")
-	if err != nil {
-		r.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	if currentAmount == -100000001 {
+		r.JSON(http.StatusUnprocessableEntity, gin.H{"error": "invalid request"})
 		return
 	}
-	defer insertStmt.Close()
-
-	if _, err = insertStmt.Exec(clientId, request.Valor, request.Descricao, request.Tipo); err != nil {
-		r.JSON(http.StatusInternalServerError, gin.H{"erro": err.Error()})
-		return
-	}
-
-	r.JSON(http.StatusOK, gin.H{"limite": h.cachedLimits[clientId], "saldo": newAmount})
+	r.JSON(http.StatusOK, gin.H{"limite": h.cachedLimits[clientId], "saldo": currentAmount})
+	return
 }
 
 func (h *ApiHandler) GetStatement(r *gin.Context) {
 	clientId, err := strconv.Atoi(r.Param("id"))
-
-	if h.cachedLimits[clientId] == 0 {
-		r.JSON(http.StatusNotFound, gin.H{"error": "cliente não encontrado"})
-		return
-	}
-
 	if err != nil {
 		r.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	limit := h.cachedLimits[clientId]
+	// Estrutura para armazenar o resultado de uma única linha
+	var row struct {
+		Limit       int
+		Balance     int
+		Value       sql.NullInt32 // Use sql.NullInt32 para lidar com possíveis nulos
+		Description sql.NullString
+		Type        sql.NullString
+		DoneAt      sql.NullTime
+	}
 
 	transactions := make([]TransactionResponse, 0)
-	rows, err := h.db.Query("SELECT valor, descricao, tipo, realizada_em FROM transacoes WHERE cliente_id = $1 ORDER BY realizada_em DESC LIMIT 10", clientId)
+	rows, err := h.db.Query("SELECT c.limite, c.saldo, t.valor, t.descricao, t.tipo, t.realizada_em FROM clientes c LEFT JOIN LATERAL (SELECT valor, descricao, tipo, realizada_em FROM transacoes WHERE cliente_id = c.id ORDER BY id DESC LIMIT 10) t ON true WHERE c.id = $1;", clientId)
+	if err != nil {
+		r.JSON(http.StatusNotFound, gin.H{"error": "cliente não encontrado"})
+		return
+	}
+	defer rows.Close()
+
+	var limit, balance int
 	for rows.Next() {
-		var timestamp time.Time
-		var transaction TransactionResponse
-		rows.Scan(&transaction.Value, &transaction.Description, &transaction.Type, &timestamp)
-		transaction.DoneAt = timestamp.Format(time.RFC3339Nano)
-		transactions = append(transactions, transaction)
+		err := rows.Scan(&row.Limit, &row.Balance, &row.Value, &row.Description, &row.Type, &row.DoneAt)
+		if err != nil {
+			r.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		if limit == 0 && balance == 0 {
+			limit = row.Limit
+			balance = row.Balance
+		}
+
+		if row.Value.Valid {
+			transactions = append(transactions, TransactionResponse{
+				Value:       int(row.Value.Int32),
+				Description: row.Description.String,
+				Type:        row.Type.String,
+				DoneAt:      row.DoneAt.Time.Format(time.RFC3339Nano),
+			})
+		}
 	}
 
 	r.JSON(http.StatusOK, StatementResponse{
 		Balance: BalanceResponse{
-			Amount:        0,
+			Amount:        balance,
 			Limit:         limit,
 			StatementDate: time.Now().UTC().Format("2006-01-02T15:04:05.000000Z"),
 		},
 		Transactions: transactions,
 	})
-	return
 
 }
 
