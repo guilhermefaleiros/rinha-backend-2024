@@ -7,8 +7,9 @@ services:
       dockerfile: Dockerfile
     hostname: api01
     environment:
-      - PORT=8081
-    network_mode: host
+      - PORT=8082
+    ports:
+      - "8082:8082"
     depends_on:
       - db
     deploy:
@@ -16,18 +17,23 @@ services:
         limits:
           cpus: "0.37"
           memory: "30MB"
+    networks:
+      - app-network
 
   api02:
     <<: *api
     hostname: api02
-    network_mode: host
+    ports:
+      - "8081:8081"
     environment:
-      - PORT=8082
+      - PORT=8081
     deploy:
       resources:
         limits:
           cpus: "0.37"
           memory: "30MB"
+    networks:
+      - app-network
 
   nginx:
     image: nginx:latest
@@ -36,12 +42,15 @@ services:
     depends_on:
       - api01
       - api02
-    network_mode: host
+    ports:
+      - "9999:9999"
     deploy:
       resources:
         limits:
           cpus: "0.2"
           memory: "30MB"
+    networks:
+      - app-network
 
   db:
     image: postgres:latest
@@ -51,7 +60,8 @@ services:
       - POSTGRES_PASSWORD=123
       - POSTGRES_USER=admin
       - POSTGRES_DB=rinha
-    network_mode: host
+    ports:
+      - "5432:5432"
     volumes:
       - ./config/init.sql:/docker-entrypoint-initdb.d/init.sql
       #- ./config/postgresql.conf:/docker-entrypoint-initdb.d/postgresql.conf
@@ -60,3 +70,8 @@ services:
         limits:
           cpus: "0.56"
           memory: "480MB"
+    networks:
+      - app-network
+
+networks:
+  app-network:
