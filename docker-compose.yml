@@ -53,8 +53,6 @@ services:
       - POSTGRES_PASSWORD=123
       - POSTGRES_USER=admin
       - POSTGRES_DB=rinha
-    ports:
-      - "5432:5432"
     network_mode: host
     volumes:
       - ./config/init.sql:/docker-entrypoint-initdb.d/init.sql
