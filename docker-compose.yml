@@ -27,6 +27,8 @@ services:
       - "8081:8081"
     environment:
       - PORT=8081
+    depends_on:
+      - db
     deploy:
       resources:
         limits:
@@ -70,6 +72,12 @@ services:
         limits:
           cpus: "0.56"
           memory: "480MB"
+    healthcheck:
+      test: [ "CMD-SHELL", "sh -c 'pg_isready -U admin -d rinha'" ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
     networks:
       - app-network
 

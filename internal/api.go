@@ -11,7 +11,7 @@ import (
 func StartAPI() {
 	r := gin.Default()
 
-	db, err := sql.Open("postgres", "host=db port=5432 user=admin password=123 dbname=rinha sslmode=disable")
+	db, err := sql.Open("postgres", "host=localhost port=5432 user=admin password=123 dbname=rinha sslmode=disable")
 	db.SetMaxOpenConns(30)
 	db.SetConnMaxLifetime(5 * time.Minute)
 
